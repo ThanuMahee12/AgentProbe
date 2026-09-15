@@ -289,11 +289,19 @@ class Firestore:
         for n, cmd in enumerate(session.commands):
             writes.append(self.write("%s/commands/%04d" % (path, n), cmd.to_dict()))
 
+        # Files carry the content the agent produced, so a script it wrote is a
+        # document you can open rather than something to reconstruct from a
+        # transcript chunk. Without this the summary reports a file_count the
+        # dashboard has nothing to render against.
+        for n, touch in enumerate(session.files):
+            writes.append(self.write("%s/files/%04d" % (path, n), touch.to_dict()))
+
         applied = self.commit(writes)
         return {
             "writes": applied,
             "chunks": len(session.transcript_chunks),
             "commands": len(session.commands),
+            "files": len(session.files),
         }
 
     def push_context(self, items: Iterable[ContextItem]) -> int:
