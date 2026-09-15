@@ -1,0 +1,27 @@
+# Credentials - NEVER commit. Probes read these from paths in config.
+*.json.key
+service-account*.json
+sa.json
+firebase-tools.json
+.env
+.env.*
+!.env.example
+
+# Local config (contains project ids / credential paths)
+agentprobe.toml
+!agentprobe.example.toml
+
+# Local state: which sessions have already been pushed
+.state/
+*.state.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Backups the installer writes
+*.bak-*
