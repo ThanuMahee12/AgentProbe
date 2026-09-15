@@ -24,12 +24,13 @@ from typing import Any, Dict, Iterable, List, Optional
 from ..schema import Command, FileTouch, Session
 from .base import Probe
 
-# tool name -> the input key holding the path it touched, and what it did
+# tool name -> where the path, produced content and replaced text sit in its input
 FILE_TOOLS = {
-    "Read": ("file_path", "read"),
-    "Write": ("file_path", "write"),
-    "Edit": ("file_path", "edit"),
-    "NotebookEdit": ("notebook_path", "edit"),
+    "Read":         {"path": "file_path",     "action": "read"},
+    "Write":        {"path": "file_path",     "action": "write", "content": "content"},
+    "Edit":         {"path": "file_path",     "action": "edit",
+                     "content": "new_string", "replaced": "old_string"},
+    "NotebookEdit": {"path": "notebook_path", "action": "edit",  "content": "new_source"},
 }
 
 DEFAULT_ROOT = os.path.expanduser("~/.claude/projects")
@@ -188,11 +189,22 @@ def _collect_tool_use(
             )
         return
 
-    if name in FILE_TOOLS:
-        key, action = FILE_TOOLS[name]
-        path = tool_input.get(key)
-        if path:
-            files.append(FileTouch(ts=ts, path=path, action=action))
+    spec = FILE_TOOLS.get(name)
+    if spec:
+        path = tool_input.get(spec["path"])
+        if not path:
+            return
+        content = tool_input.get(spec["content"]) if spec.get("content") else ""
+        replaced = tool_input.get(spec["replaced"]) if spec.get("replaced") else ""
+        files.append(
+            FileTouch(
+                ts=ts,
+                path=path,
+                action=spec["action"],
+                content=content if isinstance(content, str) else "",
+                replaced=replaced if isinstance(replaced, str) else "",
+            )
+        )
 
 
 def _first_text(content: Any) -> str:

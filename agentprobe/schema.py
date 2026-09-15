@@ -37,16 +37,59 @@ class Command:
         return dataclasses.asdict(self)
 
 
+#: Per-artifact content cap. Firestore allows 1 MiB per document and the rest of
+#: the record needs room; anything larger is stored truncated with a flag, and
+#: the untruncated text is still in the transcript chunks.
+MAX_CONTENT = 200_000
+
+
 @dataclass
 class FileTouch:
-    """A file the agent read, wrote or edited."""
+    """A file the agent read, wrote or edited.
+
+    For writes and edits the produced content is captured, not just the path.
+    The transcript already contains it, but only as raw JSONL - storing it here
+    means a script the agent wrote is a document you can open, rather than
+    something to dig out of a 2 MB chunk.
+
+    Reads carry no content: the payload lands in a tool_result rather than the
+    tool_use input, it is usually a file that already exists on disk, and
+    including it would multiply the size of every session for no recall value.
+    """
 
     ts: str
     path: str
     action: str  # read | write | edit
+    content: str = ""
+    bytes: int = 0
+    truncated: bool = False
+    #: for edits, what was replaced - enough to see the change, not the file
+    replaced: str = ""
+
+    def __post_init__(self) -> None:
+        if self.content:
+            self.bytes = len(self.content.encode("utf-8", "replace"))
+            if len(self.content) > MAX_CONTENT:
+                self.content = self.content[:MAX_CONTENT]
+                self.truncated = True
+        if len(self.replaced) > 4_000:
+            self.replaced = self.replaced[:4_000]
+
+    @property
+    def name(self) -> str:
+        import os
+
+        return os.path.basename(self.path) or self.path
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
+
+    def summary(self) -> Dict[str, Any]:
+        """Content-free form, for the session document's inline list."""
+        d = dataclasses.asdict(self)
+        d.pop("content", None)
+        d.pop("replaced", None)
+        return d
 
 
 @dataclass
