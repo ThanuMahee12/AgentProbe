@@ -102,6 +102,10 @@ class Session:
     """
 
     provider: str          # claude | antigravity | gemini | copilot | cursor
+    #: Unique per transcript. Subagent transcripts report their PARENT's
+    #: sessionId, so keying documents on that silently overwrote a session with
+    #: one of its own subagents - 12 files collapsing onto one document. The
+    #: transcript's own id is the only thing that is actually unique.
     session_id: str
     date: str              # YYYY-MM-DD, derived from `started`
     started: str
@@ -112,6 +116,12 @@ class Session:
     user_email: str
     os_user: str
     host: str
+
+    #: The session this transcript belongs to. Equals session_id for a normal
+    #: session; for a subagent transcript it points at the parent.
+    parent_session_id: str = ""
+    #: True when the transcript is a subagent run rather than a session.
+    is_sidechain: bool = False
 
     git_branch: str = ""
     agent_version: str = ""
@@ -157,6 +167,8 @@ class Session:
             "schema_version": self.schema_version,
             "provider": self.provider,
             "session_id": self.session_id,
+            "parent_session_id": self.parent_session_id or self.session_id,
+            "is_sidechain": self.is_sidechain,
             "date": self.date,
             "started": self.started,
             "ended": self.ended,

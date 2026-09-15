@@ -99,18 +99,36 @@ def cmd_push(args: argparse.Namespace) -> int:
             return 0
 
         totals = {"sessions": 0, "writes": 0}
+        pushed: List[Session] = []
+        interrupted = ""
         for session in pending:
-            result = store.push_session(session)
+            try:
+                result = store.push_session(session)
+            except Exception as exc:
+                # Persist what already landed before surfacing the failure. A
+                # bulk import that dies two thirds through must resume from
+                # there, not start over - re-pushing 8k writes to reach the same
+                # wall is how a quota problem becomes a permanent one.
+                interrupted = str(exc)
+                break
             state.mark(session)
+            pushed.append(session)
             totals["sessions"] += 1
             totals["writes"] += result["writes"]
             if args.verbose:
                 print("pushed %s  %s  %d writes" % (
                     session.session_id[:8], session.project, result["writes"]))
 
-        items = extract_many(pending)
-        context_writes = store.push_context(items)
+        context_writes = 0
+        if pushed and not interrupted:
+            context_writes = store.push_context(extract_many(pushed))
         state.save()
+
+        if interrupted:
+            print("agentprobe: stopped after %d session(s), %d remaining: %s" % (
+                totals["sessions"], len(pending) - totals["sessions"], interrupted),
+                file=sys.stderr)
+            return 0
 
         if args.verbose or not args.quiet:
             print("agentprobe: %d session(s), %d writes, %d context item(s) via %s" % (

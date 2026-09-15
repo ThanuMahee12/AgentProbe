@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import random
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -48,11 +49,28 @@ FIREBASE_TOOLS_CLIENT_SECRET = "j9iVZfS8kkCEFUPaAeJV0sAi"
 #: Firestore caps a commit at 500 writes.
 MAX_WRITES = 450
 
+#: Retry budget for a rate-limited batch, and the ceiling on backoff.
+MAX_RETRIES = 7
+MAX_BACKOFF = 32.0
+
+#: Pause between batches during a bulk import.
+THROTTLE = 0.35
+
+#: Firestore also caps the REQUEST PAYLOAD at 11 MiB, independently of the write
+#: count. Transcript chunks are 700k chars each and file artifacts up to 200k, so
+#: a session can blow the payload limit long before it reaches 450 writes.
+#: Batching has to respect both. 8 MiB leaves headroom for JSON overhead.
+MAX_BYTES = 8 * 1024 * 1024
+
 TIMEOUT = 30
 
 
 class AuthError(RuntimeError):
     pass
+
+
+class QuotaExceeded(RuntimeError):
+    """The daily write allowance is gone. Not retryable until it resets."""
 
 
 # --------------------------------------------------------------------------- #
@@ -198,6 +216,27 @@ def encode_fields(data: Dict[str, Any]) -> Dict[str, Any]:
     return {k: encode(v) for k, v in data.items()}
 
 
+def _batch(writes: List[Dict[str, Any]]) -> Iterable[List[Dict[str, Any]]]:
+    """Split writes so each request respects BOTH Firestore limits.
+
+    Counting writes alone is not enough: the payload cap is reached first for
+    anything carrying transcript text. A single write larger than the cap is
+    still emitted alone - the server will reject it, and failing loudly beats
+    silently dropping a session's transcript.
+    """
+    batch: List[Dict[str, Any]] = []
+    size = 0
+    for w in writes:
+        w_size = len(json.dumps(w))
+        if batch and (len(batch) >= MAX_WRITES or size + w_size > MAX_BYTES):
+            yield batch
+            batch, size = [], 0
+        batch.append(w)
+        size += w_size
+    if batch:
+        yield batch
+
+
 # --------------------------------------------------------------------------- #
 # client
 # --------------------------------------------------------------------------- #
@@ -224,21 +263,49 @@ class Firestore:
         }
 
     def commit(self, writes: List[Dict[str, Any]]) -> int:
-        """Apply writes in batches. Returns how many were applied."""
+        """Apply writes in batches, backing off when the database pushes back.
+
+        Firestore rate-limits sustained write bandwidth and answers 429
+        RESOURCE_EXHAUSTED rather than queueing. A bulk import - 184 sessions and
+        12k writes - hits that within seconds, so retrying is not an edge case
+        here, it is the normal path. 503 is retried for the same reason.
+
+        Backoff is exponential with jitter: without jitter, every batch that
+        failed together retries together and collides again.
+        """
         applied = 0
-        for i in range(0, len(writes), MAX_WRITES):
-            chunk = writes[i:i + MAX_WRITES]
-            resp = self._session.post(
-                "%s:commit" % self.base,
-                headers=self._headers(),
-                data=json.dumps({"writes": chunk}),
-                timeout=TIMEOUT,
-            )
-            if resp.status_code != 200:
+        for chunk in _batch(writes):
+            delay = 1.0
+            for attempt in range(MAX_RETRIES):
+                resp = self._session.post(
+                    "%s:commit" % self.base,
+                    headers=self._headers(),
+                    data=json.dumps({"writes": chunk}),
+                    timeout=TIMEOUT,
+                )
+                if resp.status_code == 200:
+                    break
+                # Two different 429s. "maximum bandwidth" is momentary
+                # back-pressure and clears in seconds. "Quota exceeded" is the
+                # daily write cap and will not clear until it resets, so
+                # retrying it just burns minutes to reach the same failure.
+                if resp.status_code == 429 and "quota exceeded" in resp.text.lower():
+                    raise QuotaExceeded(
+                        "daily Firestore write quota exhausted after %d write(s); "
+                        "resume with `agentprobe push` once it resets" % applied
+                    )
+                if resp.status_code in (429, 503) and attempt < MAX_RETRIES - 1:
+                    time.sleep(delay + random.uniform(0, delay / 2))
+                    delay = min(delay * 2, MAX_BACKOFF)
+                    continue
                 raise RuntimeError(
                     "firestore commit failed (%s): %s" % (resp.status_code, resp.text[:400])
                 )
             applied += len(chunk)
+            # Pace successive batches. Firestore's own guidance is to ramp up
+            # gradually rather than open at full rate.
+            if len(writes) > len(chunk):
+                time.sleep(THROTTLE)
         return applied
 
     def get(self, path: str) -> Optional[Dict[str, Any]]:

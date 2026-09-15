@@ -80,6 +80,7 @@ class ClaudeProbe(Probe):
         version = ""
         timestamps: List[str] = []
         message_count = 0
+        sidechain_records = 0
         preview = ""
         commands: List[Command] = []
         files: List[FileTouch] = []
@@ -95,6 +96,9 @@ class ClaudeProbe(Probe):
             ts = rec.get("timestamp") or ""
             if ts:
                 timestamps.append(ts)
+
+            if rec.get("isSidechain"):
+                sidechain_records += 1
 
             rtype = rec.get("type")
             if rtype not in ("user", "assistant"):
@@ -128,9 +132,12 @@ class ClaudeProbe(Probe):
                     if tool_id:
                         errored[tool_id] = bool(block.get("is_error"))
 
-        if not session_id:
-            # fall back to the filename, which is the session id
-            session_id = os.path.splitext(os.path.basename(handle))[0]
+        # The filename stem is the transcript's real identity. For a normal
+        # session it equals the reported sessionId; for a subagent run
+        # (agent-*.jsonl) it does not, and the reported one belongs to the parent.
+        transcript_id = os.path.splitext(os.path.basename(handle))[0]
+        parent_id = session_id or transcript_id
+        session_id = transcript_id
 
         # Fold tool_result outcomes back onto the commands that produced them.
         for cmd in commands:
@@ -144,6 +151,10 @@ class ClaudeProbe(Probe):
         return Session(
             provider=self.provider,
             session_id=session_id,
+            parent_session_id=parent_id,
+            # A subagent transcript is sidechain end to end; a session that
+            # merely spawned one has a handful among hundreds of records.
+            is_sidechain=bool(records) and sidechain_records >= len(records) * 0.9,
             date=started[:10] if started else "",
             started=started,
             ended=ended,
