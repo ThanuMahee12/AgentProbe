@@ -126,6 +126,11 @@ class Session:
             "agent_version": self.agent_version,
             "message_count": self.message_count,
             "command_count": len(self.commands),
+            # Precomputed because the dashboard's list query reads summary
+            # documents only - commands live in a subcollection and a session
+            # here carries 141 of them. Without this the card could not show a
+            # failure count without fetching every command of every session.
+            "failed_count": sum(1 for c in self.commands if c.exit_status == 1),
             "file_count": len(self.files),
             "preview": self.preview,
             "transcript_chunks": len(self.transcript_chunks),
