@@ -124,6 +124,36 @@ def cmd_push(args: argparse.Namespace) -> int:
         return 0
 
 
+def cmd_import_notes(args: argparse.Namespace) -> int:
+    """Import AgentContext's legacy markdown session notes into Firestore."""
+    from .legacy import parse_directory, summarize
+
+    notes = parse_directory(args.path)
+    if not notes:
+        print("no notes found under %s" % args.path, file=sys.stderr)
+        return 1
+
+    stats = summarize(notes)
+    print("Parsed %d note(s) from %s" % (stats["notes"], args.path))
+    print("  generations       %s  (1 generated, 2 session-headed, 3 plain)" % stats["generations"])
+    print("  sessions referenced %d" % stats["sessions_referenced"])
+    print("  date range        %s .. %s" % stats["range"])
+    print("  undated           %d" % stats["undated"])
+    print("  total             %.0f KB" % (stats["bytes"] / 1024))
+
+    if args.dry_run:
+        print("\n(dry run - nothing written)")
+        return 0
+
+    config = Config.load()
+    from .store import Firestore
+
+    store = Firestore(config)
+    written = store.push_notes(notes)
+    print("\nwrote %d note document(s) to notes/ via %s" % (written, store.creds.kind))
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     config = Config.load()
     sessions = _collect(config)
@@ -164,12 +194,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     export = sub.add_parser("export", help="dump parsed sessions to JSON", parents=[common])
     export.add_argument("path")
 
+    imp = sub.add_parser("import-notes", help="import legacy markdown notes", parents=[common])
+    imp.add_argument("path", help="directory holding claude/ and gemini/ note folders")
+    imp.add_argument("--dry-run", action="store_true", help="parse and report, write nothing")
+
     args = parser.parse_args(argv)
 
     if args.command == "push":
         return cmd_push(args)
     if args.command == "export":
         return cmd_export(args)
+    if args.command == "import-notes":
+        return cmd_import_notes(args)
     return cmd_status(args)
 
 

@@ -151,7 +151,12 @@ def tokenize(*parts: str) -> List[str]:
         if not part:
             continue
         for tok in re.split(r"[^A-Za-z0-9]+", part.lower()):
-            if len(tok) < 2 or tok in STOPWORDS or tok.isdigit() and len(tok) > 6:
+            if len(tok) < 2 or tok in STOPWORDS:
+                continue
+            # Short all-digit tokens are date and version fragments - "2026",
+            # "01", "12" - which match nearly every record and rank nothing.
+            # Longer digit runs are real identifiers and stay searchable.
+            if tok.isdigit() and len(tok) <= 4:
                 continue
             if tok not in seen:
                 seen.append(tok)
