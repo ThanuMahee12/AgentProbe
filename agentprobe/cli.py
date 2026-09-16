@@ -189,6 +189,23 @@ def cmd_migrate_legacy(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prune_legacy(args: argparse.Namespace) -> int:
+    """Delete the legacy Firestore trees. Converted data must already exist."""
+    from .prune_legacy import ALLOWED, LegacyPruner
+    from .store import Firestore
+
+    roots = args.roots or sorted(ALLOWED)
+    pruner = LegacyPruner(Firestore(Config.load()))
+    stats = pruner.prune(roots, dry_run=args.dry_run)
+
+    total = sum(stats.values())
+    for root, n in sorted(stats.items()):
+        print("  %-16s %d document(s)" % (root, n))
+    print("  %-16s %d%s" % ("total", total,
+                            "  (dry run - nothing deleted)" if args.dry_run else "  DELETED"))
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     config = Config.load()
     sessions = _collect(config)
@@ -233,6 +250,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                          help="convert the old claude/session tree into the current schema")
     mig.add_argument("--dry-run", action="store_true", help="report what would be written")
 
+    prune = sub.add_parser("prune-legacy", parents=[common],
+                           help="delete the legacy Firestore trees after conversion")
+    prune.add_argument("roots", nargs="*", help="claude and/or agentcontext (default: both)")
+    prune.add_argument("--dry-run", action="store_true", help="count what would be deleted")
+
     imp = sub.add_parser("import-notes", help="import legacy markdown notes", parents=[common])
     imp.add_argument("path", help="directory holding claude/ and gemini/ note folders")
     imp.add_argument("--dry-run", action="store_true", help="parse and report, write nothing")
@@ -247,6 +269,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_import_notes(args)
     if args.command == "migrate-legacy":
         return cmd_migrate_legacy(args)
+    if args.command == "prune-legacy":
+        return cmd_prune_legacy(args)
     return cmd_status(args)
 
 
