@@ -172,6 +172,23 @@ def cmd_import_notes(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate_legacy(args: argparse.Namespace) -> int:
+    """Convert the previous pipeline's Firestore tree into the current schema."""
+    from .migrate_legacy import LegacyMigrator
+    from .store import Firestore
+
+    store = Firestore(Config.load())
+    stats = LegacyMigrator(store).migrate(dry_run=args.dry_run, verbose=args.verbose)
+
+    print("legacy sessions found : %d" % stats["found"])
+    print("  converted           : %d" % stats["converted"])
+    print("  skipped (no id/date): %d" % stats["skipped"])
+    print("  transcript parts    : %d" % stats["parts"])
+    print("  writes              : %d%s" % (
+        stats["writes"], "  (dry run - nothing written)" if args.dry_run else ""))
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     config = Config.load()
     sessions = _collect(config)
@@ -212,6 +229,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     export = sub.add_parser("export", help="dump parsed sessions to JSON", parents=[common])
     export.add_argument("path")
 
+    mig = sub.add_parser("migrate-legacy", parents=[common],
+                         help="convert the old claude/session tree into the current schema")
+    mig.add_argument("--dry-run", action="store_true", help="report what would be written")
+
     imp = sub.add_parser("import-notes", help="import legacy markdown notes", parents=[common])
     imp.add_argument("path", help="directory holding claude/ and gemini/ note folders")
     imp.add_argument("--dry-run", action="store_true", help="parse and report, write nothing")
@@ -224,6 +245,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_export(args)
     if args.command == "import-notes":
         return cmd_import_notes(args)
+    if args.command == "migrate-legacy":
+        return cmd_migrate_legacy(args)
     return cmd_status(args)
 
 

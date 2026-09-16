@@ -318,6 +318,16 @@ class Firestore:
             raise RuntimeError("firestore get failed (%s): %s" % (resp.status_code, resp.text[:300]))
         return resp.json()
 
+    def write_raw(self, path: str, typed_fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Write fields that are ALREADY in Firestore's typed form.
+
+        Copying a document by unwrapping its values and re-encoding them loses
+        types: the REST API returns integers as strings, so an integerValue
+        round-trips into a stringValue. Passing the typed map through verbatim
+        keeps the copy faithful.
+        """
+        return {"update": {"name": "%s/%s" % (self.name_base, path), "fields": typed_fields}}
+
     def write(self, path: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         """A full-document overwrite, expressed as an update with no mask."""
         return {
