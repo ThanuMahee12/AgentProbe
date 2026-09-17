@@ -206,6 +206,26 @@ def cmd_prune_legacy(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_publish_docs(args: argparse.Namespace) -> int:
+    """Publish AgentContext's markdown content to Firestore."""
+    from .publish_docs import COLLECTION, publish
+    from .store import Firestore
+
+    store = Firestore(Config.load())
+    stats = publish(store, args.path, dry_run=args.dry_run)
+
+    print("markdown found : %d" % stats["found"])
+    for section, n in sorted(stats["sections"].items()):
+        print("  %-14s %d" % (section, n))
+    if args.dry_run:
+        print("  (dry run - nothing written)")
+    else:
+        print("  published to %s/ %s" % (
+            COLLECTION,
+            ("(%d stale removed)" % stats["removed"]) if stats["removed"] else ""))
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     config = Config.load()
     sessions = _collect(config)
@@ -255,6 +275,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     prune.add_argument("roots", nargs="*", help="claude and/or agentcontext (default: both)")
     prune.add_argument("--dry-run", action="store_true", help="count what would be deleted")
 
+    pub = sub.add_parser("publish-docs", parents=[common],
+                         help="publish AgentContext markdown content to Firestore")
+    pub.add_argument("path", help="the content/ directory")
+    pub.add_argument("--dry-run", action="store_true")
+
     imp = sub.add_parser("import-notes", help="import legacy markdown notes", parents=[common])
     imp.add_argument("path", help="directory holding claude/ and gemini/ note folders")
     imp.add_argument("--dry-run", action="store_true", help="parse and report, write nothing")
@@ -271,6 +296,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_migrate_legacy(args)
     if args.command == "prune-legacy":
         return cmd_prune_legacy(args)
+    if args.command == "publish-docs":
+        return cmd_publish_docs(args)
     return cmd_status(args)
 
 
