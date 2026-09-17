@@ -53,24 +53,41 @@ def parse(raw: str) -> Dict[str, Any]:
     return {"meta": meta, "body": body}
 
 
+def _walk(root: str) -> List[str]:
+    """Every .md under root, as paths relative to it."""
+    out: List[str] = []
+    for dirpath, _dirs, files in os.walk(root):
+        for name in sorted(files):
+            if name.endswith(".md"):
+                out.append(os.path.relpath(os.path.join(dirpath, name), root))
+    return sorted(out)
+
+
 def load(directory: str) -> List[Dict[str, Any]]:
     docs: List[Dict[str, Any]] = []
     for folder, section in FOLDERS.items():
         path = os.path.join(directory, folder)
         if not os.path.isdir(path):
             continue
-        for name in sorted(os.listdir(path)):
-            if not name.endswith(".md"):
-                continue
-            with open(os.path.join(path, name), "r", encoding="utf-8") as fh:
+        for rel in _walk(path):
+            name = os.path.basename(rel)
+            with open(os.path.join(path, rel), "r", encoding="utf-8") as fh:
                 parsed = parse(fh.read())
             meta, body = parsed["meta"], parsed["body"]
-            doc_id = name[:-3]
+            doc_path = rel[:-3].replace(os.sep, "/")
+            segments = doc_path.split("/")
+            doc_id = segments[-1]
             docs.append({
                 # Section is part of the id so two sections can hold a document
                 # of the same name without colliding.
-                "_id": "%s__%s" % (section, doc_id),
+                # Keyed by section + full path, so two projects can hold a
+                # document of the same name without colliding.
+                "_id": "%s__%s" % (section, doc_path.replace("/", "__")),
                 "id": doc_id,
+                "path": doc_path,
+                "segments": segments,
+                "parent": "/".join(segments[:-1]),
+                "depth": len(segments) - 1,
                 "section": section,
                 "title": meta.get("title") or doc_id,
                 "description": meta.get("description", ""),
@@ -79,12 +96,12 @@ def load(directory: str) -> List[Dict[str, Any]]:
                 "url": meta.get("url", ""),
                 "gist": meta.get("gist", ""),
                 "notion": meta.get("notion", ""),
-                "project": meta.get("project", ""),
+                "project": meta.get("project") or (segments[0] if len(segments) > 1 else ""),
                 "tags": meta.get("tags") if isinstance(meta.get("tags"), list) else [],
                 "body": body,
                 "headings": [{"depth": len(h[0]), "text": h[1].strip()}
                              for h in HEADING.findall(body)],
-                "source": "content/%s/%s" % (folder, name),
+                "source": "content/%s/%s" % (folder, rel.replace(os.sep, "/")),
                 "bytes": len(body.encode("utf-8")),
             })
     return docs
@@ -106,7 +123,7 @@ def publish(store: Firestore, directory: str, dry_run: bool = False) -> Dict[str
     # serving something that no longer exists in the repository.
     import requests
 
-    wanted = {"%s__%s" % (d["section"], d["id"]) for d in load(directory)}
+    wanted = {"%s__%s" % (d["section"], d["path"].replace("/", "__")) for d in load(directory)}
     r = requests.get("%s/%s?pageSize=300" % (store.base, COLLECTION),
                      headers=store._headers(), timeout=60).json()
     stale = [
