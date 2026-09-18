@@ -21,6 +21,13 @@ from .store import Firestore
 
 COLLECTION = "docs"
 
+#: What a document is worth when nobody has said. Draft, so that publishing is
+#: something an admin does rather than something that happens.
+DEFAULT_STATUS = "draft"
+
+#: Only these reach the public page. Everything else is admin-panel only.
+PUBLIC_STATUSES = ("published",)
+
 #: content/<folder> -> the section key the site groups by
 FOLDERS = {
     "brainstorm": "brainstorms",
@@ -92,12 +99,25 @@ def load(directory: str) -> List[Dict[str, Any]]:
                 "title": meta.get("title") or doc_id,
                 "description": meta.get("description", ""),
                 "date": meta.get("date", ""),
-                "status": meta.get("status", ""),
+                # Absent status means draft, never public. Defaulting the other
+                # way would mean a file appearing in the tree is enough to
+                # publish it, and promotion is meant to be a decision somebody
+                # makes rather than a side effect of writing a document.
+                "status": meta.get("status") or DEFAULT_STATUS,
                 "url": meta.get("url", ""),
                 "gist": meta.get("gist", ""),
                 "notion": meta.get("notion", ""),
                 "project": meta.get("project") or (segments[0] if len(segments) > 1 else ""),
                 "tags": meta.get("tags") if isinstance(meta.get("tags"), list) else [],
+                # Provenance. When something published here turns out wrong, the
+                # question is always which agent wrote it and how, and that has
+                # to be answerable without guessing.
+                "agent": meta.get("agent", ""),
+                "tools": meta.get("tools") if isinstance(meta.get("tools"), list) else [],
+                "model": meta.get("model", ""),
+                "session": meta.get("session", ""),
+                "os_user": meta.get("os_user", ""),
+                "host": meta.get("host", ""),
                 "body": body,
                 "headings": [{"depth": len(h[0]), "text": h[1].strip()}
                              for h in HEADING.findall(body)],
@@ -109,9 +129,10 @@ def load(directory: str) -> List[Dict[str, Any]]:
 
 def publish(store: Firestore, directory: str, dry_run: bool = False) -> Dict[str, Any]:
     docs = load(directory)
-    stats: Dict[str, Any] = {"found": len(docs), "sections": {}, "removed": 0}
+    stats: Dict[str, Any] = {"found": len(docs), "sections": {}, "removed": 0, "status": {}}
     for d in docs:
         stats["sections"][d["section"]] = stats["sections"].get(d["section"], 0) + 1
+        stats["status"][d["status"]] = stats["status"].get(d["status"], 0) + 1
 
     if dry_run:
         return stats

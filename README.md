@@ -1,27 +1,36 @@
 # AgentProbe
 
-Session-history collectors for AI coding agents.
+One store for what your agents did and what they know — and the thing that keeps
+every machine wired into it.
 
 Development is spread across a growing set of agents — Claude Code, Antigravity,
-Gemini, Copilot, Cursor — and each stores sessions differently. Claude Code writes
-JSONL transcripts and fires lifecycle hooks. Cursor keeps conversations in SQLite
-inside workspace storage. Copilot and Gemini bury logs in extension directories.
-It is all local, none of it is searchable, and most of it is rotated away or lost
-when a machine is rebuilt.
+Gemini, OpenCode, Cursor — and each keeps its own history in its own format.
+Claude Code writes JSONL transcripts and fires lifecycle hooks. Cursor keeps
+conversations in SQLite inside workspace storage. Memory is worse: Claude Code
+scopes it per *project directory*, so a fact learned in one repository is
+invisible from the next, no other tool can read it, and none of it survives a
+rebuilt machine.
 
-AgentProbe attaches one probe per agent. Each probe understands a single tool's
-storage format, extracts completed sessions, and normalizes them into a shared
-schema: the full transcript, every command run, every file read or edited, plus
-timing, project and user metadata. The result is pushed to Firestore, where it
-becomes permanent and queryable.
+AgentProbe does three jobs.
 
-The pipeline is **deterministic by design** — no language model anywhere in the
-collection path. Capture costs nothing per session, adds no latency, and never
-invents detail that was not in the original record.
+**Capture.** One probe per agent, each understanding a single tool's storage
+format and normalizing it into a shared schema — transcript, every command,
+every file touched, plus timing, project and user metadata. Deterministic by
+design: **no language model anywhere in the collection path**, so capture costs
+nothing per session, adds no latency, and never invents detail that was not in
+the original record.
 
-AgentProbe is the collection half of a pair. **AgentContext** is the dashboard
-that reads what it writes, rendering your work day by day with search, filters,
-and selective public sharing.
+**Serve.** An MCP server exposes remembered facts and the session archive back to
+*any* agent that speaks the protocol, on any machine. One store, many agents,
+rather than one memory per tool per directory.
+
+**Maintain.** An installer that wires every account on a machine — capture hook
+and MCP registration across four clients — and a `doctor` that says what is set
+up, what is not, and the command that fixes each thing.
+
+AgentProbe is not itself the database; **Firestore** is. AgentProbe owns writing
+to it and serving from it. **AgentContext** is the other half of the pair — the
+dashboard that reads what this writes, rendering your work day by day.
 
 ---
 
