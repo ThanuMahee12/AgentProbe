@@ -598,18 +598,6 @@ class Firestore:
         writes = [self.write("context/%s" % i.doc_id, i.to_dict()) for i in items]
         return self.commit(writes) if writes else 0
 
-    def push_notes(self, notes: Iterable[Any]) -> int:
-        """Imported legacy markdown notes.
-
-        Their own collection rather than `sessions`: most of them are
-        hand-written notes with no session id, turn count or transcript, and
-        filing them as sessions would put mostly-empty records on the timeline.
-        Document ids derive from the source path, so re-importing updates in
-        place instead of duplicating.
-        """
-        writes = [self.write("notes/%s" % n.doc_id, n.to_dict()) for n in notes]
-        return self.commit(writes) if writes else 0
-
 
 # --------------------------------------------------------------------------- #
 # per-user state: what has already been pushed

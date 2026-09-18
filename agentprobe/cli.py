@@ -144,70 +144,6 @@ def cmd_push(args: argparse.Namespace) -> int:
         return 0
 
 
-def cmd_import_notes(args: argparse.Namespace) -> int:
-    """Import AgentContext's legacy markdown session notes into Firestore."""
-    from .legacy import parse_directory, summarize
-
-    notes = parse_directory(args.path)
-    if not notes:
-        print("no notes found under %s" % args.path, file=sys.stderr)
-        return 1
-
-    stats = summarize(notes)
-    print("Parsed %d note(s) from %s" % (stats["notes"], args.path))
-    print("  generations       %s  (1 generated, 2 session-headed, 3 plain)" % stats["generations"])
-    print("  sessions referenced %d" % stats["sessions_referenced"])
-    print("  date range        %s .. %s" % stats["range"])
-    print("  undated           %d" % stats["undated"])
-    print("  total             %.0f KB" % (stats["bytes"] / 1024))
-
-    if args.dry_run:
-        print("\n(dry run - nothing written)")
-        return 0
-
-    config = Config.load()
-    from .store import Firestore
-
-    store = Firestore(config)
-    written = store.push_notes(notes)
-    print("\nwrote %d note document(s) to notes/ via %s" % (written, store.creds.kind))
-    return 0
-
-
-def cmd_migrate_legacy(args: argparse.Namespace) -> int:
-    """Convert the previous pipeline's Firestore tree into the current schema."""
-    from .migrate_legacy import LegacyMigrator
-    from .store import Firestore
-
-    store = Firestore(Config.load())
-    stats = LegacyMigrator(store).migrate(dry_run=args.dry_run, verbose=args.verbose)
-
-    print("legacy sessions found : %d" % stats["found"])
-    print("  converted           : %d" % stats["converted"])
-    print("  skipped (no id/date): %d" % stats["skipped"])
-    print("  transcript parts    : %d" % stats["parts"])
-    print("  writes              : %d%s" % (
-        stats["writes"], "  (dry run - nothing written)" if args.dry_run else ""))
-    return 0
-
-
-def cmd_prune_legacy(args: argparse.Namespace) -> int:
-    """Delete the legacy Firestore trees. Converted data must already exist."""
-    from .prune_legacy import ALLOWED, LegacyPruner
-    from .store import Firestore
-
-    roots = args.roots or sorted(ALLOWED)
-    pruner = LegacyPruner(Firestore(Config.load()))
-    stats = pruner.prune(roots, dry_run=args.dry_run)
-
-    total = sum(stats.values())
-    for root, n in sorted(stats.items()):
-        print("  %-16s %d document(s)" % (root, n))
-    print("  %-16s %d%s" % ("total", total,
-                            "  (dry run - nothing deleted)" if args.dry_run else "  DELETED"))
-    return 0
-
-
 def cmd_publish_docs(args: argparse.Namespace) -> int:
     """Publish AgentContext's markdown content to Firestore."""
     from .publish_docs import COLLECTION, publish
@@ -309,23 +245,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     doc.add_argument("--all-users", action="store_true",
                      help="check every account with a login shell (needs root)")
 
-    mig = sub.add_parser("migrate-legacy", parents=[common],
-                         help="convert the old claude/session tree into the current schema")
-    mig.add_argument("--dry-run", action="store_true", help="report what would be written")
-
-    prune = sub.add_parser("prune-legacy", parents=[common],
-                           help="delete the legacy Firestore trees after conversion")
-    prune.add_argument("roots", nargs="*", help="claude and/or agentcontext (default: both)")
-    prune.add_argument("--dry-run", action="store_true", help="count what would be deleted")
-
     pub = sub.add_parser("publish-docs", parents=[common],
                          help="publish AgentContext markdown content to Firestore")
     pub.add_argument("path", help="the content/ directory")
     pub.add_argument("--dry-run", action="store_true")
-
-    imp = sub.add_parser("import-notes", help="import legacy markdown notes", parents=[common])
-    imp.add_argument("path", help="directory holding claude/ and gemini/ note folders")
-    imp.add_argument("--dry-run", action="store_true", help="parse and report, write nothing")
 
     args = parser.parse_args(argv)
 
@@ -337,12 +260,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_mcp(args)
     if args.command == "doctor":
         return cmd_doctor(args)
-    if args.command == "import-notes":
-        return cmd_import_notes(args)
-    if args.command == "migrate-legacy":
-        return cmd_migrate_legacy(args)
-    if args.command == "prune-legacy":
-        return cmd_prune_legacy(args)
     if args.command == "publish-docs":
         return cmd_publish_docs(args)
     return cmd_status(args)

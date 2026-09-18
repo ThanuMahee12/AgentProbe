@@ -34,18 +34,28 @@ re-running after a resumed session updates in place instead of duplicating.
 
 ```
 agentprobe/
+  cli.py          status, push, export, mcp, doctor, publish-docs
+  config.py       machine-global config and credential resolution
   schema.py       the normalized Session record every probe produces
   context.py      URL extraction, classification, keyword tokenizer
   store.py        Firestore client - writes, and the read path search uses
   search.py       keyword search over the archive - PROVISIONAL, see below
   memory.py       the shared memory record
   mcp_server.py   MCP server over stdio - memory + archive tools
+  doctor.py       setup diagnostics; exits with the failure count
+  publish_docs.py publishes AgentContext's markdown (arguably the wrong repo)
   probes/
     base.py       probe interface + shared identity helpers
     claude.py     Claude Code JSONL parser
 install.sh        machine-global installer: /opt tree, launcher, hooks, MCP
 docs/             install and MCP reference
+.claude/skills/   machine-setup, agent-memory
 ```
+
+One-off migration code is deliberately absent. The legacy Firestore trees were
+converted and pruned, and the markdown notes imported, in September 2026; the
+source collections no longer exist, so those commands could not run again even
+if kept. They are in git history if the shape is ever needed again.
 
 ## `search.py` is provisional - do not extend it
 
