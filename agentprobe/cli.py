@@ -243,6 +243,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     """Report setup state. Exits with the failure count, so a caller can branch."""
     from .doctor import main as run_doctor
 
+    if args.all_users:
+        from .doctor import all_users
+
+        extra = []
+        if args.no_auth:
+            extra.append("--no-auth")
+        if args.offline:
+            extra.append("--offline")
+        return all_users(extra)
+
     return run_doctor(Config.load(), auth=not args.no_auth,
                       network=not args.offline, as_json=args.json)
 
@@ -296,6 +306,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     doc.add_argument("--no-auth", action="store_true",
                      help="skip the `gh`/`glab`/`firebase` auth probes")
     doc.add_argument("--offline", action="store_true", help="skip the Firestore round trip")
+    doc.add_argument("--all-users", action="store_true",
+                     help="check every account with a login shell (needs root)")
 
     mig = sub.add_parser("migrate-legacy", parents=[common],
                          help="convert the old claude/session tree into the current schema")

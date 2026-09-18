@@ -335,3 +335,89 @@ def main(config: Optional[Config] = None, auth: bool = True, network: bool = Tru
     else:
         print(render(groups))
     return sum(1 for g in groups for c in g.checks if c.status == FAIL)
+
+# --------------------------------------------------------------------------- #
+# every account, from one invocation
+# --------------------------------------------------------------------------- #
+
+
+def discover_users() -> List[str]:
+    """Accounts with a real login shell and a home directory.
+
+    The same rule install.sh wires hooks by, so `doctor --all-users` reports on
+    exactly the set that was configured rather than a different one.
+    """
+    code, out = run(["getent", "passwd"], timeout=10)
+    if code != 0:
+        return []
+    users = []
+    for line in out.splitlines():
+        parts = line.split(":")
+        if len(parts) < 7:
+            continue
+        name, home, shell = parts[0], parts[5], parts[6]
+        if shell.endswith(("nologin", "false", "sync")):
+            continue
+        if not (home == "/root" or home.startswith("/home/")):
+            continue
+        users.append(name)
+    return users
+
+
+def for_user(user: str, extra: Optional[List[str]] = None) -> Optional[List[dict]]:
+    """Run doctor as `user` and return its parsed groups.
+
+    Through `bash -lc` deliberately. A bare `sudo -u` keeps the *caller's*
+    environment, so it resolves a different PATH and a different python3 than
+    that account actually has - which has already produced two wrong diagnoses
+    here, reporting a missing launcher and a missing module for an account that
+    had neither problem. A login shell is the only way to see what the user sees.
+    """
+    inner = "agentprobe doctor --json " + " ".join(extra or [])
+    code, out = run(["sudo", "-n", "-u", user, "bash", "-lc", inner], timeout=180)
+    start = out.find("[")
+    if start < 0:
+        return None
+    try:
+        return json.loads(out[start:])
+    except ValueError:
+        return None
+
+
+def all_users(extra: Optional[List[str]] = None) -> int:
+    """Report every account. Returns the total failure count."""
+    if os.geteuid() != 0:
+        print("--all-users needs root (it runs the check as each account)")
+        return 1
+
+    users = discover_users()
+    if not users:
+        print("no accounts with a login shell found")
+        return 1
+
+    total = 0
+    detail = []
+    print("Checking %d account(s): %s\n" % (len(users), ", ".join(users)))
+
+    for user in users:
+        groups = for_user(user, extra)
+        if groups is None:
+            print("  %-12s could not run doctor as this account" % user)
+            total += 1
+            continue
+        checks = [c for g in groups for c in g["checks"]]
+        fails = [c for c in checks if c["status"] == FAIL]
+        warns = [c for c in checks if c["status"] == WARN]
+        total += len(fails)
+        print("  %-12s %d failure(s), %d warning(s)" % (user, len(fails), len(warns)))
+        for c in fails:
+            detail.append("  %-12s %-14s %s" % (user, c["name"], c["detail"]))
+
+    if detail:
+        print("\nFailures:")
+        for line in detail:
+            print(line)
+
+    print("\n%d failure(s) across %d account(s)" % (total, len(users)))
+    return total
+

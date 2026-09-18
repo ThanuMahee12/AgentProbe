@@ -16,6 +16,22 @@ thing. It exits with the **failure count**, so a script or an agent can branch o
 it without parsing output. Work through what it says until it reports zero
 failures; everything below is the detail behind those lines.
 
+On a machine with several accounts, check them all at once:
+
+```bash
+sudo /usr/local/bin/agentprobe doctor --all-users
+```
+
+It runs the check as each account through a **login shell**, which matters:
+`sudo -u someone agentprobe ...` keeps the caller's environment and so resolves a
+different `PATH` and a different `python3` than that account really has. Checking
+by hand that way has already produced two wrong diagnoses — a missing launcher
+and a missing module, for an account that had neither problem.
+
+Use the absolute path under `sudo`: `secure_path` in `/etc/sudoers` usually does
+not include `/usr/local/bin`, so a bare `sudo agentprobe` reports command not
+found.
+
 An agent can drive this whole process — the repo ships a `machine-setup` skill
 that knows the order to fix things in and which steps need a human.
 
