@@ -376,9 +376,16 @@ class Search:
         try:
             docs = self.store.run_query(build_query(collection, **kwargs))
         except IndexRequired as exc:
-            note = "%s: %s" % (collection, exc)
+            # Dropping the ordering is what keeps a search answering at all, but
+            # it silently changes what the window *means*: no longer "the newest
+            # N documents" but an arbitrary N, which can miss recent work
+            # entirely. Say so - a quietly bad answer is worse than a slow one.
+            note = ("%s: no collection-group index on the ordering field, so results "
+                    "are an ARBITRARY window rather than the most recent - recent "
+                    "matches may be missing. Fix: deploy the %s fieldOverride in "
+                    "firestore.indexes.json" % (collection, collection))
             if exc.url:
-                note += " (%s)" % exc.url
+                note += " or visit %s" % exc.url
             self.warnings.append(note)
             fallback = dict(kwargs)
             fallback.pop("order_by", None)

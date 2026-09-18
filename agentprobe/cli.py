@@ -4,6 +4,7 @@
     agentprobe push            push sessions that changed since the last run
     agentprobe push --force    push everything regardless of state
     agentprobe export FILE     dump parsed sessions to JSON (dashboard fixtures)
+    agentprobe mcp             serve memory + archive over MCP (stdio)
 
 `push` is what the SessionEnd hook calls. It is deliberately quiet on success
 and never exits non-zero for a capture failure: a hook that fails loudly when
@@ -226,6 +227,17 @@ def cmd_publish_docs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Serve the memory and archive tools over MCP on stdio.
+
+    Never prints to stdout itself - that stream is the protocol. The client
+    launches this; it is not meant to be run interactively.
+    """
+    from .mcp_server import main as serve
+
+    return serve(Config.load())
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     config = Config.load()
     sessions = _collect(config)
@@ -266,6 +278,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     export = sub.add_parser("export", help="dump parsed sessions to JSON", parents=[common])
     export.add_argument("path")
 
+    sub.add_parser("mcp", parents=[common],
+                   help="serve memory and archive tools over MCP (stdio)")
+
     mig = sub.add_parser("migrate-legacy", parents=[common],
                          help="convert the old claude/session tree into the current schema")
     mig.add_argument("--dry-run", action="store_true", help="report what would be written")
@@ -290,6 +305,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_push(args)
     if args.command == "export":
         return cmd_export(args)
+    if args.command == "mcp":
+        return cmd_mcp(args)
     if args.command == "import-notes":
         return cmd_import_notes(args)
     if args.command == "migrate-legacy":
