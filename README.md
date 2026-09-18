@@ -109,10 +109,23 @@ Typesense until keyword matching demonstrably stops being enough.
 3. **Config is global, credentials are per-user.** SSH refuses a key readable by
    group or others, so keys cannot be shared from a common path — by design.
 
+## Checking a machine
+
+```bash
+agentprobe doctor
+```
+
+Reports what is set up and what is not — runtime, credential, Firestore
+reachability, MCP registration across all four clients, and whether `firebase`,
+`gh` and `glab` are actually authenticated rather than merely installed. Every
+failing line carries the command that fixes it, and the exit status is the
+failure count.
+
 ## Documentation
 
 | Document | For |
 |---|---|
 | [docs/install.md](docs/install.md) | setting this up on a new machine, and the credential step people get wrong |
 | [docs/mcp.md](docs/mcp.md) | the MCP server: tools, storage, protocol, troubleshooting |
+| [.claude/skills/](.claude/skills) | `machine-setup` and `agent-memory` — skills an agent loads to set this up or use the memory |
 | [AGENTS.md](AGENTS.md) | working *on* this repo — principles, layout, and the gotchas that have cost someone a day |

@@ -8,14 +8,34 @@ Five steps. Two of them need something only you can supply.
 ```bash
 git clone https://github.com/<you>/AgentProbe && cd AgentProbe
 sudo ./install.sh --email you@example.com --project your-firebase-project
-sudo install -m 600 /path/to/service-account.json /etc/agentcontext/sa.json
-agentprobe status
-claude mcp list | grep agentprobe-memory
+agentprobe doctor
 ```
 
-If `status` reports a credential and `mcp list` says connected, the machine is
-done. Everything below explains what those commands did and what to do when one
-of them does not.
+`doctor` reports what is set up, what is not, and the command that fixes each
+thing. It exits with the **failure count**, so a script or an agent can branch on
+it without parsing output. Work through what it says until it reports zero
+failures; everything below is the detail behind those lines.
+
+An agent can drive this whole process — the repo ships a `machine-setup` skill
+that knows the order to fix things in and which steps need a human.
+
+## What has to be on the machine
+
+| | Needed for | Notes |
+|---|---|---|
+| python 3.9+ | everything | the interpreter the launcher resolves, not necessarily yours |
+| `requests` | all Firestore traffic | |
+| `cryptography` | **service-account auth only** | easy to miss: without it the fallback still works, and installing a service account then breaks |
+| `firebase` CLI | deploying rules and indexes | `npm i -g firebase-tools` |
+| `gh` / `glab` | repository work | optional; `doctor` reports them |
+| a Firebase project | the archive | |
+
+ClickUp has no CLI. It is a remote MCP server added to an agent client, not
+something installed on the machine.
+
+Agent clients are optional and detected rather than required — Claude Code,
+Gemini CLI, Antigravity and OpenCode each get the MCP server registered if their
+config location exists.
 
 ---
 
@@ -69,8 +89,28 @@ as several different accounts.
 
 Firebase console → Project settings → Service accounts → Generate new private key.
 
+The key must be readable by **every account that runs an agent**, which mode 600
+root-owned is not — those accounts will find the file and fail to open it. Give it
+a group instead:
+
 ```bash
-sudo install -m 600 -o root -g root ~/Downloads/key.json /etc/agentcontext/sa.json
+sudo groupadd -f agentprobe
+sudo usermod -aG agentprobe someuser          # once per account
+sudo install -m 640 -o root -g agentprobe ~/Downloads/key.json /etc/agentcontext/sa.json
+```
+
+`640 root:agentprobe` keeps the private key off world-readable disk while still
+letting the accounts that need it read it. `agentprobe doctor` checks that it can
+actually be opened, not merely that it exists.
+
+**Service-account auth also needs `cryptography`**, which signs the RS256
+assertion — and only that. A machine where one account has it and the others do
+not keeps working on the refresh-token fallback and then breaks the moment the
+service account is installed, which looks like a bad key rather than a missing
+module:
+
+```bash
+sudo /usr/bin/python3 -m pip install cryptography    # the interpreter the launcher uses
 ```
 
 **Refresh token — the fallback, and a trap on a shared machine.** If no service

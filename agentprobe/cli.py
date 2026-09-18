@@ -5,6 +5,7 @@
     agentprobe push --force    push everything regardless of state
     agentprobe export FILE     dump parsed sessions to JSON (dashboard fixtures)
     agentprobe mcp             serve memory + archive over MCP (stdio)
+    agentprobe doctor          what is set up, what is not, how to fix it
 
 `push` is what the SessionEnd hook calls. It is deliberately quiet on success
 and never exits non-zero for a capture failure: a hook that fails loudly when
@@ -238,6 +239,14 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return serve(Config.load())
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Report setup state. Exits with the failure count, so a caller can branch."""
+    from .doctor import main as run_doctor
+
+    return run_doctor(Config.load(), auth=not args.no_auth,
+                      network=not args.offline, as_json=args.json)
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     config = Config.load()
     sessions = _collect(config)
@@ -281,6 +290,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("mcp", parents=[common],
                    help="serve memory and archive tools over MCP (stdio)")
 
+    doc = sub.add_parser("doctor", parents=[common],
+                         help="check what is set up on this machine")
+    doc.add_argument("--json", action="store_true", help="machine-readable output")
+    doc.add_argument("--no-auth", action="store_true",
+                     help="skip the `gh`/`glab`/`firebase` auth probes")
+    doc.add_argument("--offline", action="store_true", help="skip the Firestore round trip")
+
     mig = sub.add_parser("migrate-legacy", parents=[common],
                          help="convert the old claude/session tree into the current schema")
     mig.add_argument("--dry-run", action="store_true", help="report what would be written")
@@ -307,6 +323,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_export(args)
     if args.command == "mcp":
         return cmd_mcp(args)
+    if args.command == "doctor":
+        return cmd_doctor(args)
     if args.command == "import-notes":
         return cmd_import_notes(args)
     if args.command == "migrate-legacy":
