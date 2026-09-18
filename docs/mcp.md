@@ -65,28 +65,66 @@ existing tree is a parse, not a translation, and exporting back is lossless.
 
 ## Wiring it up
 
-`install.sh` registers the server for every user automatically. To do it by hand:
+`install.sh` registers the server for **every user in every client** it knows
+about, automatically. Re-run it after an update and it reconciles in place.
+
+One server, four clients, four config files and three different schemas. The
+shapes below were taken from what each tool's own `mcp add` writes, not from
+documentation:
+
+| Client | File | Key |
+|---|---|---|
+| Claude Code | `~/.claude.json` | `mcpServers` |
+| Gemini CLI | `~/.gemini/settings.json` | `mcpServers` |
+| Antigravity | `~/.gemini/config/mcp_config.json` | `mcpServers` |
+| OpenCode | `~/.config/opencode/opencode.json` | `mcp` |
+
+```json
+// claude
+{ "mcpServers": { "agentprobe-memory": {
+    "type": "stdio", "command": "/usr/local/bin/agentprobe", "args": ["mcp"] } } }
+
+// gemini
+{ "mcpServers": { "agentprobe-memory": {
+    "command": "/usr/local/bin/agentprobe", "args": ["mcp"] } } }
+
+// antigravity
+{ "mcpServers": { "agentprobe-memory": {
+    "command": "/usr/local/bin/agentprobe", "args": ["mcp"], "disabled": false } } }
+
+// opencode - nests argv as one list, and calls a local server "local" not "stdio"
+{ "mcp": { "agentprobe-memory": {
+    "type": "local", "command": ["/usr/local/bin/agentprobe", "mcp"], "enabled": true } } }
+```
+
+The installer writes these files directly rather than shelling out to each
+client's `mcp add`. Three of the four are installed inside a single user's home
+and cannot be run as anybody else, so their own CLIs are not available to an
+installer wiring up four accounts. Existing config is merged, never replaced —
+these are the clients' own state files, one of which is 120 KB of session data —
+and an unparseable one skips that client rather than risking overwriting it.
+
+By hand, per client:
 
 ```bash
 claude mcp add agentprobe-memory --scope user -- /usr/local/bin/agentprobe mcp
+gemini mcp add -s user -t stdio agentprobe-memory /usr/local/bin/agentprobe mcp
+agy    mcp add -t stdio agentprobe-memory /usr/local/bin/agentprobe mcp
+# opencode's `mcp add` is interactive; write the file above instead
 ```
 
-For any other MCP client, the config is the same three fields:
+### Gemini shows the server as Disabled
 
-```json
-{
-  "mcpServers": {
-    "agentprobe-memory": {
-      "type": "stdio",
-      "command": "/usr/local/bin/agentprobe",
-      "args": ["mcp"]
-    }
-  }
-}
+Expected, and not a misconfiguration:
+
+```
+Warning: MCP servers are configured but disabled because this folder is untrusted.
 ```
 
-Client config locations differ — Claude Code uses `~/.claude.json`, others use
-their own file — but the server entry does not.
+Gemini suppresses MCP servers — including user-level ones — in folders it does
+not trust. Registration is correct; trust the folder in Gemini to enable it.
+Deciding which folders are trusted is a security choice, so the installer does
+not make it for you.
 
 ## Protocol notes
 

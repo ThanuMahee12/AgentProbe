@@ -32,7 +32,10 @@ that drifts.
 | `/etc/agentcontext/config.json` | project id, email, enabled flag (mode 644) |
 | `/etc/agentcontext/sa.json` | service-account key (mode **600**) |
 | `~/.claude/settings.json` | `SessionEnd` hook, per user |
-| `~/.claude.json` | MCP server registration, per user |
+| `~/.claude.json` | MCP registration — Claude Code, per user |
+| `~/.gemini/settings.json` | MCP registration — Gemini CLI, per user |
+| `~/.gemini/config/mcp_config.json` | MCP registration — Antigravity, per user |
+| `~/.config/opencode/opencode.json` | MCP registration — OpenCode, per user |
 | `~/.local/state/agentprobe` | per-user record of what has been pushed |
 
 It discovers every account with a real login shell and a home directory, and
@@ -47,7 +50,7 @@ replaced rather than stacked, and an existing `config.json` is kept.
 ```
 --users a,b     wire only these accounts
 --no-hooks      install the code, skip settings.json
---no-mcp        install the code, skip MCP registration
+--no-mcp        install the code, skip MCP registration (all clients)
 --project ID    firebase project id      (default: the built-in one)
 --email ADDR    the address stamped on captured sessions
 --uninstall     remove hooks and MCP registration; leaves code and data

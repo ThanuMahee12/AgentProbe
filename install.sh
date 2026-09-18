@@ -117,9 +117,11 @@ apply_mcp() {
     home=$(getent passwd "$user" | cut -d: -f6)
     [ -d "$home" ] || return 0
 
-    # ~/.claude.json is Claude Code's own state file and is large - it is merged,
-    # never rewritten from scratch, and a parse failure skips this user rather
-    # than risking truncating it.
+    # One server, four clients, four different config files and three different
+    # schemas. Each client's own `mcp add` would be the obvious way, but three of
+    # them are installed in a single user's home and cannot be run as anyone
+    # else - so the files are written directly. The shapes below were taken from
+    # what each tool's own CLI writes, not from documentation.
     HOOK_USER="$user" HOOK_HOME="$home" HOOK_ACTION="$action" HOOK_BIN="$BIN" python3 - <<'PYMCP'
 import json, os, sys
 
@@ -127,44 +129,80 @@ home   = os.environ["HOOK_HOME"]
 action = os.environ["HOOK_ACTION"]
 binary = os.environ["HOOK_BIN"]
 user   = os.environ["HOOK_USER"]
-path   = os.path.join(home, ".claude.json")
+NAME   = "agentprobe-memory"
 
-if os.path.exists(path):
-    try:
-        with open(path) as fh:
-            config = json.load(fh)
-    except ValueError:
-        print("  %-12s SKIPPED (unparseable .claude.json)" % user)
-        sys.exit(0)
-else:
-    config = {}
+# (label, path, key, entry)
+CLIENTS = [
+    ("claude",      ".claude.json", "mcpServers",
+     {"type": "stdio", "command": binary, "args": ["mcp"], "env": {}}),
+    ("gemini",      ".gemini/settings.json", "mcpServers",
+     {"command": binary, "args": ["mcp"]}),
+    ("antigravity", ".gemini/config/mcp_config.json", "mcpServers",
+     {"command": binary, "args": ["mcp"], "disabled": False}),
+    # opencode nests the command as a single argv list and calls a local server
+    # "local" rather than "stdio".
+    ("opencode",    ".config/opencode/opencode.json", "mcp",
+     {"type": "local", "command": [binary, "mcp"], "enabled": True}),
+]
 
-servers = config.setdefault("mcpServers", {})
-before = "agentprobe-memory" in servers
+done = []
+for label, rel, key, entry in CLIENTS:
+    path = os.path.join(home, rel)
+    if os.path.exists(path):
+        try:
+            with open(path) as fh:
+                config = json.load(fh)
+        except ValueError:
+            # Corrupt or half-written. These are the clients' own state files -
+            # one of them is 120 KB of session data - so leave it entirely alone
+            # rather than risk replacing it with our two keys.
+            done.append("%s:SKIPPED" % label)
+            continue
+        if not isinstance(config, dict):
+            done.append("%s:SKIPPED" % label)
+            continue
+    elif action != "install":
+        continue
+    else:
+        config = {}
 
-if action == "install":
-    servers["agentprobe-memory"] = {
-        "type": "stdio",
-        "command": binary,
-        "args": ["mcp"],
-        "env": {},
-    }
-    label = "updated" if before else "registered"
-else:
-    servers.pop("agentprobe-memory", None)
-    if not servers:
-        config.pop("mcpServers", None)
-    label = "removed" if before else "absent"
+    servers = config.get(key)
+    if not isinstance(servers, dict):
+        servers = {}
+    before = NAME in servers
 
-tmp = path + ".tmp"
-with open(tmp, "w") as fh:
-    json.dump(config, fh, indent=2)
-    fh.write("\n")
-os.replace(tmp, path)
-print("  %-12s %s" % (user, label))
+    if action == "install":
+        servers[NAME] = entry
+        config[key] = servers
+        done.append("%s:%s" % (label, "updated" if before else "added"))
+    else:
+        servers.pop(NAME, None)
+        if servers:
+            config[key] = servers
+        else:
+            config.pop(key, None)
+        if not before:
+            continue
+        done.append("%s:removed" % label)
+
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(config, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+print("  %-12s %s" % (user, ", ".join(done) if done else "nothing to do"))
 PYMCP
 
-    chown "$user":"$(id -gn "$user")" "$home/.claude.json" 2>/dev/null || true
+    # Every path we may have created, so a root-run installer does not leave
+    # root-owned config in someone else's home.
+    for d in .claude.json .gemini .config/opencode; do
+        [ -e "$home/$d" ] && chown -R "$user":"$(id -gn "$user")" "$home/$d" 2>/dev/null
+    done
+    return 0
 }
 
 if [ "$UNINSTALL" = "1" ]; then
@@ -228,7 +266,7 @@ if [ "$DO_HOOKS" = "1" ]; then
 fi
 
 if [ "$DO_MCP" = "1" ]; then
-    echo "Registering the memory MCP server:"
+    echo "Registering the memory MCP server (claude, gemini, antigravity, opencode):"
     for u in $USER_LIST; do apply_mcp "$u" install; done
 fi
 
