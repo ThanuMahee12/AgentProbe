@@ -1,5 +1,16 @@
 """Keyword search over everything AgentProbe has already pushed.
 
+**PROVISIONAL.** This is a workaround for the database, not a design. Firestore
+has no full-text search, so everything below is scaffolding around that absence:
+a keyword array built at write time, and a bounded scan of recent documents
+ranked in memory. It works, it is bounded, and it will never rank a phrase
+properly or reach past its own window.
+
+Do not extend it. When a store with real full-text search lands, the query layer
+here is replaced wholesale - the ranking, snippet and rendering layers survive,
+the scanning does not. Effort spent making the scan cleverer is effort thrown
+away twice.
+
 `push` sends a session up; this brings it back down. That is the whole point -
 capture is only worth the writes if the archive is reachable from inside the
 next session, and an agent that can answer "how did I mount that bucket last

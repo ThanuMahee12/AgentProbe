@@ -121,6 +121,16 @@ reachability, MCP registration across all four clients, and whether `firebase`,
 failing line carries the command that fixes it, and the exit status is the
 failure count.
 
+## Status
+
+Working today: session capture, the memory MCP server, multi-client registration,
+and `doctor`. Storage is Firestore.
+
+`search.py` is **provisional** — Firestore has no full-text search, so it is a
+bounded scan ranked in memory. It works and is bounded; it is not extended. A
+store with real full-text search replaces its query layer wholesale, which is a
+future concern rather than current work.
+
 ## Documentation
 
 | Document | For |

@@ -37,7 +37,7 @@ agentprobe/
   schema.py       the normalized Session record every probe produces
   context.py      URL extraction, classification, keyword tokenizer
   store.py        Firestore client - writes, and the read path search uses
-  search.py       keyword search over the archive
+  search.py       keyword search over the archive - PROVISIONAL, see below
   memory.py       the shared memory record
   mcp_server.py   MCP server over stdio - memory + archive tools
   probes/
@@ -46,6 +46,18 @@ agentprobe/
 install.sh        machine-global installer: /opt tree, launcher, hooks, MCP
 docs/             install and MCP reference
 ```
+
+## `search.py` is provisional - do not extend it
+
+Firestore has no full-text search. Everything in `search.py` is scaffolding
+around that absence: a keyword array built at write time, plus a bounded scan of
+recent documents ranked in memory. It answers, it is bounded, and it will never
+rank a phrase properly or reach past its own window.
+
+It is kept because it works today, and it is labelled because the temptation is
+to make the scan cleverer. Do not. When a store with real full-text search lands,
+the query layer is replaced wholesale — the ranking, snippet and rendering layers
+survive, the scanning does not. Work spent tuning the scan is thrown away twice.
 
 ## Gotchas that have already cost someone a day
 
