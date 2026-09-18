@@ -66,12 +66,30 @@ agentprobe/
     └── claude.py    Claude Code JSONL parser
 ```
 
+## Memory over MCP
+
+Capture is only half of it. `agentprobe mcp` serves the archive back as an MCP
+server, so remembered facts and past sessions are reachable from any agent that
+speaks the protocol — Claude Code, Gemini CLI, OpenCode — on any wired machine.
+
+```
+memory_search / memory_write / memory_get / memory_list / memory_delete
+history_search      past sessions, shell commands, touched files
+```
+
+Memory is otherwise per-tool and per-project-directory: a fact learned in one
+project is invisible from the next, none of it survives a rebuilt machine, and no
+other tool can read it. One server and one store fixes all three at once.
+
+See [docs/mcp.md](docs/mcp.md).
+
 ## Firestore
 
 ```
 projects/{project}/days/{YYYYMMDD}/sessions/{session_id}
   └─ parts/{n}       transcript chunks
 context/{id}         links, tickets, sheets, notes — flat, queried by field
+memory/{owner}/entries/{slug}    remembered facts
 ```
 
 Hierarchy is project → day → session, with every filterable value **also** stored
@@ -90,3 +108,11 @@ Typesense until keyword matching demonstrably stops being enough.
    Firestore or a browser.
 3. **Config is global, credentials are per-user.** SSH refuses a key readable by
    group or others, so keys cannot be shared from a common path — by design.
+
+## Documentation
+
+| Document | For |
+|---|---|
+| [docs/install.md](docs/install.md) | setting this up on a new machine, and the credential step people get wrong |
+| [docs/mcp.md](docs/mcp.md) | the MCP server: tools, storage, protocol, troubleshooting |
+| [AGENTS.md](AGENTS.md) | working *on* this repo — principles, layout, and the gotchas that have cost someone a day |

@@ -34,6 +34,11 @@ while [ $# -gt 0 ]; do
         --no-hooks)  DO_HOOKS=0; shift ;;
         --no-mcp)    DO_MCP=0; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
+        -h|--help)
+            # The flags are documented in the header comment; print it rather
+            # than keeping a second copy that drifts out of step with it.
+            sed -n '2,/^$/p' "$0" | sed 's/^#\{1,2\} \{0,1\}//'
+            exit 0 ;;
         --project)   PROJECT_ID="$2"; shift 2 ;;
         --email)     USER_EMAIL="$2"; shift 2 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
