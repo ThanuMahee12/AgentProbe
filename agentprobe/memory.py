@@ -76,6 +76,10 @@ class Memory:
     origin_agent: str = ""
     origin_host: str = ""
     user_email: str = ""
+    #: The OS account that wrote it. Distinct from user_email: the machine-global
+    #: config carries one email, but four accounts run agents under it, and
+    #: "who taught it this" is the question you ask when a fact turns out wrong.
+    os_user: str = ""
 
     created: str = ""
     updated: str = ""

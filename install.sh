@@ -8,7 +8,8 @@
 #   sudo ./install.sh                 install / update, wire every human user
 #   sudo ./install.sh --users a,b     wire only these users
 #   sudo ./install.sh --no-hooks      install the code, skip settings.json
-#   sudo ./install.sh --uninstall     remove hooks (leaves code and data)
+#   sudo ./install.sh --no-mcp        skip registering the MCP server
+#   sudo ./install.sh --uninstall     remove hooks and MCP entry (leaves code and data)
 #
 # Idempotent: safe to re-run after a git pull.
 
@@ -23,6 +24,7 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ID="${AGENTPROBE_PROJECT:-agentcontext-sessions}"
 USER_EMAIL="${AGENTPROBE_EMAIL:-}"
 DO_HOOKS=1
+DO_MCP=1
 UNINSTALL=0
 USERS=""
 
@@ -30,6 +32,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --users)     USERS="$2"; shift 2 ;;
         --no-hooks)  DO_HOOKS=0; shift ;;
+        --no-mcp)    DO_MCP=0; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
         --project)   PROJECT_ID="$2"; shift 2 ;;
         --email)     USER_EMAIL="$2"; shift 2 ;;
@@ -104,9 +107,66 @@ PY
     chown -R "$user":"$(id -gn "$user")" "$home/.claude" 2>/dev/null || true
 }
 
+apply_mcp() {
+    local user="$1" action="$2" home
+    home=$(getent passwd "$user" | cut -d: -f6)
+    [ -d "$home" ] || return 0
+
+    # ~/.claude.json is Claude Code's own state file and is large - it is merged,
+    # never rewritten from scratch, and a parse failure skips this user rather
+    # than risking truncating it.
+    HOOK_USER="$user" HOOK_HOME="$home" HOOK_ACTION="$action" HOOK_BIN="$BIN" python3 - <<'PYMCP'
+import json, os, sys
+
+home   = os.environ["HOOK_HOME"]
+action = os.environ["HOOK_ACTION"]
+binary = os.environ["HOOK_BIN"]
+user   = os.environ["HOOK_USER"]
+path   = os.path.join(home, ".claude.json")
+
+if os.path.exists(path):
+    try:
+        with open(path) as fh:
+            config = json.load(fh)
+    except ValueError:
+        print("  %-12s SKIPPED (unparseable .claude.json)" % user)
+        sys.exit(0)
+else:
+    config = {}
+
+servers = config.setdefault("mcpServers", {})
+before = "agentprobe-memory" in servers
+
+if action == "install":
+    servers["agentprobe-memory"] = {
+        "type": "stdio",
+        "command": binary,
+        "args": ["mcp"],
+        "env": {},
+    }
+    label = "updated" if before else "registered"
+else:
+    servers.pop("agentprobe-memory", None)
+    if not servers:
+        config.pop("mcpServers", None)
+    label = "removed" if before else "absent"
+
+tmp = path + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump(config, fh, indent=2)
+    fh.write("\n")
+os.replace(tmp, path)
+print("  %-12s %s" % (user, label))
+PYMCP
+
+    chown "$user":"$(id -gn "$user")" "$home/.claude.json" 2>/dev/null || true
+}
+
 if [ "$UNINSTALL" = "1" ]; then
     echo "Removing AgentProbe hooks:"
     for u in $USER_LIST; do apply_hook "$u" uninstall; done
+    echo "Removing MCP server registration:"
+    for u in $USER_LIST; do apply_mcp "$u" uninstall; done
     echo "Done. Code at $PREFIX and data in Firestore are untouched."
     exit 0
 fi
@@ -160,6 +220,11 @@ fi
 if [ "$DO_HOOKS" = "1" ]; then
     echo "Wiring SessionEnd hooks:"
     for u in $USER_LIST; do apply_hook "$u" install; done
+fi
+
+if [ "$DO_MCP" = "1" ]; then
+    echo "Registering the memory MCP server:"
+    for u in $USER_LIST; do apply_mcp "$u" install; done
 fi
 
 echo

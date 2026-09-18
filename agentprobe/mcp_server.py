@@ -76,10 +76,24 @@ class MemoryStore:
         # is missing or the network is down. A dead tool call is recoverable; a
         # server that refuses to start looks like a broken install.
         if self._store is None:
-            from .store import Firestore
+            from .store import AuthError, Firestore
 
-            self._store = Firestore()
-            self._store.timeout = 20
+            store = Firestore()
+            store.timeout = 20
+            try:
+                store.creds.token()
+            except AuthError as exc:
+                # The expected failure on a shared box. The fallback credential
+                # is one person's `firebase login`, mode 600 inside a 700 home,
+                # so accounts other than its owner cannot read it at all - and
+                # the error Google returns says nothing about that.
+                raise RuntimeError(
+                    "no usable credential for %s: %s. A service account at "
+                    "/etc/agentcontext/sa.json is what makes this work for every "
+                    "account - the refresh-token fallback belongs to one user and "
+                    "is unreadable by the others." % (self.config.user_email or "?", exc)
+                )
+            self._store = store
         return self._store
 
     @property
@@ -185,10 +199,16 @@ class Tools:
                      project: str = "", tags: Optional[List[str]] = None) -> Dict[str, Any]:
         if not name or not body:
             return _error("both `name` and `body` are required")
+        from .probes.base import Probe
+
         entry = Memory(
             name=name, body=body, description=description, type=type,
             scope=scope or SCOPE_GLOBAL, project=project, tags=list(tags or []),
             user_email=self.config.user_email, origin_agent="mcp",
+            # Several accounts share one memory pool, so a fact has to say which
+            # of them wrote it. Reuses the probes' identity helpers rather than
+            # re-deriving the same two values a second way.
+            origin_host=Probe.host(), os_user=Probe.os_user(),
         )
         return _text(self.memory.write(entry))
 
