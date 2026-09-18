@@ -146,7 +146,7 @@ def cmd_push(args: argparse.Namespace) -> int:
 
 def cmd_publish_docs(args: argparse.Namespace) -> int:
     """Publish AgentContext's markdown content to Firestore."""
-    from .publish_docs import COLLECTION, PUBLIC_STATUSES, publish
+    from .publish_docs import COLLECTION, PUBLIC_VISIBILITY, publish
     from .store import Firestore
 
     store = Firestore(Config.load())
@@ -156,10 +156,10 @@ def cmd_publish_docs(args: argparse.Namespace) -> int:
     for section, n in sorted(stats["sections"].items()):
         print("  %-14s %d" % (section, n))
     if stats.get("status"):
-        print("status")
-        for status, n in sorted(stats["status"].items()):
-            public = "  <- PUBLIC" if status in PUBLIC_STATUSES else ""
-            print("  %-14s %d%s" % (status, n, public))
+        print("visibility")
+        for vis, n in sorted(stats["status"].items()):
+            public = "  <- PUBLIC" if vis == PUBLIC_VISIBILITY else ""
+            print("  %-14s %d%s" % (vis, n, public))
     if args.dry_run:
         print("  (dry run - nothing written)")
     else:

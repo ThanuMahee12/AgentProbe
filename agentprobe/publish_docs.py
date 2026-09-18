@@ -21,12 +21,13 @@ from .store import Firestore
 
 COLLECTION = "docs"
 
-#: What a document is worth when nobody has said. Draft, so that publishing is
-#: something an admin does rather than something that happens.
-DEFAULT_STATUS = "draft"
+#: Visibility is deliberately NOT `status`. `status` is a workflow state the
+#: author chooses - open, implementing, done - and overloading it to also mean
+#: "the world can read this" makes every workflow rename a security change.
+DEFAULT_VISIBILITY = "draft"
 
-#: Only these reach the public page. Everything else is admin-panel only.
-PUBLIC_STATUSES = ("published",)
+#: The only value that reaches the public page.
+PUBLIC_VISIBILITY = "published"
 
 #: content/<folder> -> the section key the site groups by
 FOLDERS = {
@@ -99,11 +100,12 @@ def load(directory: str) -> List[Dict[str, Any]]:
                 "title": meta.get("title") or doc_id,
                 "description": meta.get("description", ""),
                 "date": meta.get("date", ""),
-                # Absent status means draft, never public. Defaulting the other
-                # way would mean a file appearing in the tree is enough to
-                # publish it, and promotion is meant to be a decision somebody
-                # makes rather than a side effect of writing a document.
-                "status": meta.get("status") or DEFAULT_STATUS,
+                "status": meta.get("status", ""),
+                # Absent means draft, never public. Defaulting the other way
+                # would make a file appearing in the tree enough to publish it,
+                # and promotion is meant to be a decision somebody makes rather
+                # than a side effect of writing a document.
+                "visibility": meta.get("visibility") or DEFAULT_VISIBILITY,
                 "url": meta.get("url", ""),
                 "gist": meta.get("gist", ""),
                 "notion": meta.get("notion", ""),
@@ -132,7 +134,7 @@ def publish(store: Firestore, directory: str, dry_run: bool = False) -> Dict[str
     stats: Dict[str, Any] = {"found": len(docs), "sections": {}, "removed": 0, "status": {}}
     for d in docs:
         stats["sections"][d["section"]] = stats["sections"].get(d["section"], 0) + 1
-        stats["status"][d["status"]] = stats["status"].get(d["status"], 0) + 1
+        stats["status"][d["visibility"]] = stats["status"].get(d["visibility"], 0) + 1
 
     if dry_run:
         return stats
