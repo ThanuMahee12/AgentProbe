@@ -115,16 +115,41 @@ agy    mcp add -t stdio agentprobe-memory /usr/local/bin/agentprobe mcp
 
 ### Gemini shows the server as Disabled
 
-Expected, and not a misconfiguration:
-
 ```
 Warning: MCP servers are configured but disabled because this folder is untrusted.
+User-level servers are also suppressed in untrusted folders.
 ```
 
-Gemini suppresses MCP servers — including user-level ones — in folders it does
-not trust. Registration is correct; trust the folder in Gemini to enable it.
-Deciding which folders are trusted is a security choice, so the installer does
-not make it for you.
+Registration is fine; Gemini is refusing to *launch* the server. Folder trust
+exists so that entering a hostile repository cannot silently start whatever MCP
+servers you happen to have configured, and it suppresses user-level servers too —
+otherwise the protection would be trivial to sidestep.
+
+**Trust is per directory, and it is checked against your current working
+directory.** The most common way to see this warning is to run Gemini from a
+directory belonging to somebody else; that is the feature working, not a
+misconfiguration. Check where you are before changing any settings.
+
+Gemini prompts to trust a folder when you enter one interactively. The decision
+is recorded in `~/.gemini/trustedFolders.json`:
+
+```json
+{
+  "/home/you": "TRUST_FOLDER"
+}
+```
+
+Behaviour is not uniform across accounts — an account with no Gemini state yet
+may report `Connected` everywhere, while one that has been used needs an explicit
+entry even for its own home directory. Test as the account that will actually
+use it, from the directory it will actually run in, rather than assuming.
+
+`install.sh` does not write this file. Trusting a home directory trusts every
+repository ever cloned into it, before you have looked at any of them, so the
+narrower the entry the better — prefer a project directory over a home, and
+prefer Gemini's own interactive prompt over pre-seeding the file. `gemini
+--skip-trust` trusts the workspace for a single session without recording
+anything, which is usually the right tool when you just want one command to run.
 
 ## Protocol notes
 
