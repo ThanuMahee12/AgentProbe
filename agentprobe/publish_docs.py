@@ -106,6 +106,11 @@ def load(directory: str) -> List[Dict[str, Any]]:
                 # and promotion is meant to be a decision somebody makes rather
                 # than a side effect of writing a document.
                 "visibility": meta.get("visibility") or DEFAULT_VISIBILITY,
+                # Whether the author actually declared one. An admin promotes a
+                # document in the panel, not in the markdown, so a later publish
+                # must not silently unpublish it - but an explicit value in the
+                # file still wins, because the file is the source of truth.
+                "_declared": bool(meta.get("visibility")),
                 "url": meta.get("url", ""),
                 "gist": meta.get("gist", ""),
                 "notion": meta.get("notion", ""),
@@ -134,12 +139,32 @@ def publish(store: Firestore, directory: str, dry_run: bool = False) -> Dict[str
     stats: Dict[str, Any] = {"found": len(docs), "sections": {}, "removed": 0, "status": {}}
     for d in docs:
         stats["sections"][d["section"]] = stats["sections"].get(d["section"], 0) + 1
-        stats["status"][d["visibility"]] = stats["status"].get(d["visibility"], 0) + 1
 
     if dry_run:
         return stats
 
-    writes = [store.write("%s/%s" % (COLLECTION, d.pop("_id")), d) for d in docs]
+    # Preserve an admin's promotion. Reading current visibility first costs one
+    # query and is the difference between "publish updates the text" and
+    # "publish reverts whatever anyone decided in the panel".
+    current = {}
+    try:
+        for row in store.list_documents(COLLECTION, page_size=300):
+            current[row["_id"]] = row.get("visibility")
+    except Exception:
+        pass  # first run, or unreadable - fall through to the declared value
+
+    writes = []
+    for d in docs:
+        doc_id = d.pop("_id")
+        declared = d.pop("_declared", False)
+        if not declared and current.get(doc_id):
+            d["visibility"] = current[doc_id]
+        # Counted here, after preservation, so the report states what will
+        # actually be stored. Counting the declared value told you a document
+        # was a draft while leaving it public, which is the one direction this
+        # report must never be wrong in.
+        stats["status"][d["visibility"]] = stats["status"].get(d["visibility"], 0) + 1
+        writes.append(store.write("%s/%s" % (COLLECTION, doc_id), d))
     store.commit(writes)
 
     # A file deleted locally must disappear from the site too, or the page keeps

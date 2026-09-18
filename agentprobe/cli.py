@@ -6,6 +6,7 @@
     agentprobe export FILE     dump parsed sessions to JSON (dashboard fixtures)
     agentprobe mcp             serve memory + archive over MCP (stdio)
     agentprobe doctor          what is set up, what is not, how to fix it
+    agentprobe daily           publish per-day activity totals (counts only)
 
 `push` is what the SessionEnd hook calls. It is deliberately quiet on success
 and never exits non-zero for a capture failure: a hook that fails loudly when
@@ -198,6 +199,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                       network=not args.offline, as_json=args.json)
 
 
+def cmd_daily(args: argparse.Namespace) -> int:
+    """Publish per-day totals. Counts only - see daily.py for why."""
+    from .daily import COLLECTION, publish
+    from .store import Firestore
+
+    stats = publish(Firestore(Config.load()), since=args.since, dry_run=args.dry_run)
+    print("days       : %d" % stats["days"])
+    print("sessions   : %d" % stats["sessions"])
+    if args.dry_run:
+        print("  (dry run - nothing written)")
+    else:
+        print("written to %s/ : %d" % (COLLECTION, stats.get("written", 0)))
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     config = Config.load()
     sessions = _collect(config)
@@ -250,6 +266,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     doc.add_argument("--all-users", action="store_true",
                      help="check every account with a login shell (needs root)")
 
+    day = sub.add_parser("daily", parents=[common],
+                         help="publish per-day activity totals (counts only)")
+    day.add_argument("--since", default="", help="YYYY-MM-DD lower bound")
+    day.add_argument("--dry-run", action="store_true")
+
     pub = sub.add_parser("publish-docs", parents=[common],
                          help="publish AgentContext markdown content to Firestore")
     pub.add_argument("path", help="the content/ directory")
@@ -265,6 +286,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_mcp(args)
     if args.command == "doctor":
         return cmd_doctor(args)
+    if args.command == "daily":
+        return cmd_daily(args)
     if args.command == "publish-docs":
         return cmd_publish_docs(args)
     return cmd_status(args)
