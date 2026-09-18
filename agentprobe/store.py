@@ -17,6 +17,9 @@ Two credential paths, both minting a short-lived OAuth access token:
 Writes go through `documents:commit`, which is atomic per batch and far cheaper
 than one request per document - a session with 141 commands would otherwise be
 141 round trips.
+
+Reads go through `documents:runQuery`. They exist for `search`, which is the
+reverse direction: capture pushes a session up, search pulls it back down.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ import base64
 import json
 import os
 import random
+import re
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -71,6 +75,19 @@ class AuthError(RuntimeError):
 
 class QuotaExceeded(RuntimeError):
     """The daily write allowance is gone. Not retryable until it resets."""
+
+
+class IndexRequired(RuntimeError):
+    """A query needs a composite index that does not exist.
+
+    Carries the console URL Firestore returns, because the only fix is a
+    human clicking it. Search catches this and drops the offending filter
+    rather than failing: a slower answer beats no answer.
+    """
+
+    def __init__(self, message: str, url: str = "") -> None:
+        super().__init__(message)
+        self.url = url
 
 
 # --------------------------------------------------------------------------- #
@@ -216,6 +233,106 @@ def encode_fields(data: Dict[str, Any]) -> Dict[str, Any]:
     return {k: encode(v) for k, v in data.items()}
 
 
+def decode(value: Dict[str, Any]) -> Any:
+    """Firestore typed value -> Python. The inverse of `encode`.
+
+    Integers come back over REST as *strings* - `{"integerValue": "141"}` - so
+    decoding is not cosmetic: without it a message_count sorts as text and
+    "9" ranks above "1780".
+    """
+    if not isinstance(value, dict):
+        return value
+    if "nullValue" in value:
+        return None
+    if "integerValue" in value:
+        return int(value["integerValue"])
+    if "doubleValue" in value:
+        return float(value["doubleValue"])
+    if "booleanValue" in value:
+        return bool(value["booleanValue"])
+    for key in ("stringValue", "timestampValue", "bytesValue", "referenceValue"):
+        if key in value:
+            return value[key]
+    if "arrayValue" in value:
+        return [decode(v) for v in (value["arrayValue"].get("values") or [])]
+    if "mapValue" in value:
+        return {k: decode(v) for k, v in (value["mapValue"].get("fields") or {}).items()}
+    if "geoPointValue" in value:
+        return value["geoPointValue"]
+    return None
+
+
+def decode_fields(fields: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    return {k: decode(v) for k, v in (fields or {}).items()}
+
+
+# --------------------------------------------------------------------------- #
+# query building
+# --------------------------------------------------------------------------- #
+
+#: field filter operators, spelled the way the REST API wants them
+OPS = {
+    "==": "EQUAL",
+    "!=": "NOT_EQUAL",
+    ">": "GREATER_THAN",
+    ">=": "GREATER_THAN_OR_EQUAL",
+    "<": "LESS_THAN",
+    "<=": "LESS_THAN_OR_EQUAL",
+    "in": "IN",
+    "array-contains": "ARRAY_CONTAINS",
+    "array-contains-any": "ARRAY_CONTAINS_ANY",
+}
+
+#: Firestore caps a disjunctive filter's operand list. Longer term lists are
+#: split into several queries by the caller.
+MAX_DISJUNCTS = 30
+
+
+def build_query(
+    collection: str,
+    where: Optional[List[Tuple[str, str, Any]]] = None,
+    order_by: str = "",
+    desc: bool = True,
+    limit: int = 0,
+    all_descendants: bool = False,
+) -> Dict[str, Any]:
+    """A structuredQuery body.
+
+    Deliberately kept to one filter in practice: Firestore auto-maintains
+    single-field indexes (collection *and* collection-group scope), but a query
+    combining two fields needs a composite index somebody has to create by hand.
+    Search therefore pushes its single most selective filter down and does the
+    rest in memory.
+    """
+    query: Dict[str, Any] = {
+        "from": [{"collectionId": collection, "allDescendants": bool(all_descendants)}]
+    }
+
+    clauses = []
+    for fieldpath, op, value in where or []:
+        if op not in OPS:
+            raise ValueError("unknown operator %r" % op)
+        clauses.append({
+            "fieldFilter": {
+                "field": {"fieldPath": fieldpath},
+                "op": OPS[op],
+                "value": encode(value),
+            }
+        })
+    if len(clauses) == 1:
+        query["where"] = clauses[0]
+    elif clauses:
+        query["where"] = {"compositeFilter": {"op": "AND", "filters": clauses}}
+
+    if order_by:
+        query["orderBy"] = [
+            {"field": {"fieldPath": order_by}, "direction": "DESCENDING" if desc else "ASCENDING"}
+        ]
+    if limit:
+        query["limit"] = int(limit)
+    return query
+
+
 def _batch(writes: List[Dict[str, Any]]) -> Iterable[List[Dict[str, Any]]]:
     """Split writes so each request respects BOTH Firestore limits.
 
@@ -252,6 +369,9 @@ class Firestore:
         # it must begin with "projects/".
         self.name_base = "projects/%s/databases/(default)/documents" % self.config.project_id
         self.base = "%s/%s" % (FIRESTORE_ROOT, self.name_base)
+        # Per-instance so the recall hook can be impatient. A hook that blocks
+        # a prompt for 30s is worse than a hook that returns nothing.
+        self.timeout = TIMEOUT
         self._session = requests.Session()
 
     # -- low level -------------------------------------------------------- #
@@ -317,6 +437,99 @@ class Firestore:
         if resp.status_code != 200:
             raise RuntimeError("firestore get failed (%s): %s" % (resp.status_code, resp.text[:300]))
         return resp.json()
+
+    # -- reads ------------------------------------------------------------ #
+
+    def _wrap(self, name: str, fields: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Decoded document plus where it came from.
+
+        The path is not decoration: a command document carries no project or
+        session id of its own, only `ts` and the text. Everything else that
+        makes it findable is in the path it lives at.
+        """
+        doc = decode_fields(fields)
+        path = name.split("/documents/", 1)[-1]
+        doc["_path"] = path
+        doc["_id"] = path.rsplit("/", 1)[-1]
+        return doc
+
+    def run_query(
+        self, query: Dict[str, Any], parent: str = ""
+    ) -> List[Dict[str, Any]]:
+        """POST :runQuery and return decoded documents.
+
+        `parent` scopes the query to a document; empty means the database root,
+        which is what a collection-group query wants.
+        """
+        url = "%s:runQuery" % self.base
+        if parent:
+            url = "%s/%s:runQuery" % (self.base, parent.strip("/"))
+
+        delay = 1.0
+        for attempt in range(MAX_RETRIES):
+            resp = self._session.post(
+                url,
+                headers=self._headers(),
+                data=json.dumps({"structuredQuery": query}),
+                timeout=self.timeout,
+            )
+            if resp.status_code == 200:
+                break
+            if resp.status_code == 400 and "index" in resp.text.lower():
+                m = re.search(r"https://console\.(?:firebase|cloud)\.google\.com\S+?(?=[\"\\\s]|$)", resp.text)
+                raise IndexRequired(
+                    "this query needs a composite index that does not exist",
+                    m.group(0) if m else "",
+                )
+            if resp.status_code in (429, 503) and attempt < MAX_RETRIES - 1:
+                time.sleep(delay + random.uniform(0, delay / 2))
+                delay = min(delay * 2, MAX_BACKOFF)
+                continue
+            raise RuntimeError(
+                "firestore query failed (%s): %s" % (resp.status_code, resp.text[:400])
+            )
+
+        out: List[Dict[str, Any]] = []
+        for row in resp.json():
+            doc = row.get("document")
+            if doc and doc.get("name"):
+                out.append(self._wrap(doc["name"], doc.get("fields")))
+        return out
+
+    def list_documents(
+        self, path: str, page_size: int = 100, max_documents: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Every document in a collection, following pagination.
+
+        Used for transcript chunks, where the collection is tiny and known -
+        listing beats a query because there is nothing to filter on.
+        """
+        out: List[Dict[str, Any]] = []
+        token = ""
+        while True:
+            params = {"pageSize": page_size}
+            if token:
+                params["pageToken"] = token
+            resp = self._session.get(
+                "%s/%s" % (self.base, path.strip("/")),
+                headers=self._headers(),
+                params=params,
+                timeout=self.timeout,
+            )
+            if resp.status_code == 404:
+                return out
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    "firestore list failed (%s): %s" % (resp.status_code, resp.text[:300])
+                )
+            body = resp.json()
+            for doc in body.get("documents") or []:
+                out.append(self._wrap(doc["name"], doc.get("fields")))
+                if max_documents and len(out) >= max_documents:
+                    return out
+            token = body.get("nextPageToken") or ""
+            if not token:
+                return out
 
     def write_raw(self, path: str, typed_fields: Dict[str, Any]) -> Dict[str, Any]:
         """Write fields that are ALREADY in Firestore's typed form.
